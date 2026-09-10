@@ -22,15 +22,19 @@ import java.util.Set;
  * vs are missing.
  *
  * The index target is derived per-batch from each key's own date prefix
- * (keys look like "YYYY/MM/DD/..."), narrowing to e.g. "rmaas-tier2-2017-07-*"
- * instead of the fully open "rmaas-tier2-*". This is a correctness-preserving
- * optimization, not a hardcoded date range: a batch with keys from multiple
- * months queries multiple narrow index patterns (comma-joined) rather than
- * ever falling back to scanning every index. Narrowing matters because the
- * open wildcard fans every query out across every shard in the cluster's
- * whole history, which was tripping Elasticsearch's parent circuit breaker
- * under concurrency (see run.log from the --concurrency 10 test) - the
- * per-query "size" isn't the dominant cost, the shard fan-out is.
+ * (keys look like "YYYY/MM/DD/..."), narrowing to e.g.
+ * "{esIndexPrefix}2017-07-*" instead of the fully open "{esIndexPrefix}*".
+ * Neither the year/month nor the index prefix itself are hardcoded: the
+ * date comes from each key, and the prefix (e.g. "rmaas-tier2-") comes from
+ * BACKLOGGER_ES_INDEX_PREFIX / --es-index-prefix. This is a
+ * correctness-preserving optimization, not a fixed date range: a batch with
+ * keys from multiple months queries multiple narrow index patterns
+ * (comma-joined) rather than ever falling back to scanning every index.
+ * Narrowing matters because the open wildcard fans every query out across
+ * every shard in the cluster's whole history, which was tripping
+ * Elasticsearch's parent circuit breaker under concurrency (see run.log
+ * from the --concurrency 10 test) - the per-query "size" isn't the
+ * dominant cost, the shard fan-out is.
  */
 public class EsBatchChecker {
 
@@ -38,11 +42,13 @@ public class EsBatchChecker {
 
     private final HttpClient client;
     private final String esHost;
+    private final String esIndexPrefix;
     private final Logger logger;
 
-    EsBatchChecker(HttpClient client, String esHost, Logger logger) {
+    EsBatchChecker(HttpClient client, String esHost, String esIndexPrefix, Logger logger) {
         this.client = client;
         this.esHost = esHost;
+        this.esIndexPrefix = esIndexPrefix;
         this.logger = logger;
     }
 
@@ -175,21 +181,23 @@ public class EsBatchChecker {
 
     /**
      * Builds a comma-joined list of month-scoped index patterns covering
-     * every key in the batch, e.g. "rmaas-tier2-2017-07-*" - or
-     * "rmaas-tier2-2017-07-*,rmaas-tier2-2017-08-*" if the batch happens to
-     * span two months. Falls back to the fully open "rmaas-tier2-*" only for
-     * a key that doesn't parse as "YYYY/MM/..." (so nothing is ever silently
-     * excluded from the search).
+     * every key in the batch, e.g. "{esIndexPrefix}2017-07-*" - or
+     * "{esIndexPrefix}2017-07-*,{esIndexPrefix}2017-08-*" if the batch
+     * happens to span two months. Falls back to the fully open
+     * "{esIndexPrefix}*" only for a key that doesn't parse as "YYYY/MM/..."
+     * (so nothing is ever silently excluded from the search). The index
+     * prefix itself (e.g. "rmaas-tier2-") is configurable, not hardcoded -
+     * see BACKLOGGER_ES_INDEX_PREFIX / --es-index-prefix.
      */
-    private static String indexPatternFor(List<String> keys) {
+    private String indexPatternFor(List<String> keys) {
         Set<String> patterns = new LinkedHashSet<>();
         for (String key : keys) {
-            String pattern = "rmaas-tier2-*";
+            String pattern = esIndexPrefix + "*";
             if (key.length() >= 7 && key.charAt(4) == '/' && key.charAt(7) == '/') {
                 String year = key.substring(0, 4);
                 String month = key.substring(5, 7);
                 if (isDigits(year) && isDigits(month)) {
-                    pattern = "rmaas-tier2-" + year + "-" + month + "-*";
+                    pattern = esIndexPrefix + year + "-" + month + "-*";
                 }
             }
             patterns.add(pattern);

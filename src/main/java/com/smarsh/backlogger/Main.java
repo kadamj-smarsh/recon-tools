@@ -43,6 +43,8 @@ public class Main {
             logger.info("Output dir         : " + config.outputDir);
             logger.info("ES host            : " + config.esHost);
             logger.info("Backlogger URL     : " + config.backloggerUrl);
+            logger.info("Token URL          : " + config.tokenUrl);
+            logger.info("ES index prefix    : " + config.esIndexPrefix);
             if (config.limit != null) {
                 logger.info("Limit              : " + config.limit + " keys");
             }
@@ -74,9 +76,15 @@ public class Main {
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .build();
 
-            EsBatchChecker esChecker = new EsBatchChecker(httpClient, config.esHost, logger);
+            TokenProvider tokenProvider = new TokenProvider(httpClient, config.tokenUrl,
+                config.clientId, config.clientSecret, logger);
+            // Fetch the first token up front so a bad client id/secret or an
+            // unreachable UAA endpoint fails fast, before any batches run.
+            tokenProvider.getToken();
+
+            EsBatchChecker esChecker = new EsBatchChecker(httpClient, config.esHost, config.esIndexPrefix, logger);
             BackloggerClient backloggerClient = new BackloggerClient(httpClient, config.backloggerUrl,
-                config.backloggerToken, logger);
+                tokenProvider, logger);
 
             try (OutputWriters outputWriters = new OutputWriters(config.outputDir)) {
                 Semaphore concurrencyLimiter = new Semaphore(config.concurrency);

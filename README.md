@@ -50,21 +50,56 @@ Produces the runnable fat jar: `target\backlogger-reprocess-1.0.0.jar`.
 
 ## Configuration
 
-| Setting | How | Default |
+| Setting | Env var (required) | CLI override |
 |---|---|---|
-| Backlogger auth token | Env var `BACKLOGGER_TOKEN` (required — program exits with a clear error if unset) | none |
+| Elasticsearch host | `BACKLOGGER_ES_HOST` | `--es-host <url>` |
+| ES index name prefix | `BACKLOGGER_ES_INDEX_PREFIX` | `--es-index-prefix <str>` |
+| Backlogger `replayKeys` URL | `BACKLOGGER_REPLAY_URL` | `--backlogger-url <url>` |
+| UAA OAuth token URL | `BACKLOGGER_TOKEN_URL` | `--token-url <url>` |
+| OAuth `client_id` | `BACKLOGGER_CLIENT_ID` | — |
+| OAuth `client_secret` | `BACKLOGGER_CLIENT_SECRET` | — |
+
+**ES index name prefix** (e.g. `rmaas-tier2-`) is the literal string
+`EsBatchChecker` appends each batch's own `YYYY-MM-*` to (see "Known risks"
+below for why it's narrowed per batch) — this makes the tool reusable
+against a differently-named index family without a code change, same as
+every other host/URL setting.
+
+| Other setting | CLI flag | Default |
+|---|---|---|
 | Input CSV | `--input <path>` | `swfaciti_keys_to_reprocess.csv` |
 | Batch size | `--batch-size <int>` | `500` |
 | In-flight concurrency | `--concurrency <int>` | `100` |
 | Output directory | `--output-dir <path>` | `./output` |
 | Limit (test runs) | `--limit <int>` | unlimited |
-| ES host | `--es-host <url>` | `http://10.30.146.93:9200` |
-| Backlogger URL | `--backlogger-url <url>` | ea-tier2-backlogger-v2 `replayKeys` URL |
+
+### How the backlogger token works
+
+There's no static `BACKLOGGER_TOKEN` anymore. Instead, `TokenProvider`
+fetches an OAuth2 access token via `client_credentials` at startup:
+
+```
+POST {BACKLOGGER_TOKEN_URL}
+content-type: application/x-www-form-urlencoded
+grant_type=client_credentials&client_id={BACKLOGGER_CLIENT_ID}&client_secret={BACKLOGGER_CLIENT_SECRET}
+```
+
+The token is fetched **once** (fails fast at startup if the credentials or
+URL are wrong — before any ES/backlogger batch work starts), cached in
+memory, and reused for every request for the whole run. If a backlogger
+call ever gets an HTTP 401 (token expired or revoked mid-run — plausible on
+a run lasting an hour+), the cached token is invalidated and a fresh one is
+fetched automatically on the next retry attempt — no manual re-run needed.
 
 ## Running from the command line
 
 ```powershell
-$env:BACKLOGGER_TOKEN = "<your real bearer token>"
+$env:BACKLOGGER_ES_HOST = "http://10.10.100.10:9200"
+$env:BACKLOGGER_ES_INDEX_PREFIX = "rmaas-tier2-"
+$env:BACKLOGGER_REPLAY_URL = "https://ea-tier2-backlogger-v2-rest-rmaas.ea.internal.citi.us-east-1.aws.smarsh.cloud/backlogger/replayKeys"
+$env:BACKLOGGER_TOKEN_URL = "https://uaa.ea.internal.citi.us-east-1.aws.smarsh.cloud/oauth/token/"
+$env:BACKLOGGER_CLIENT_ID = "<your client id>"
+$env:BACKLOGGER_CLIENT_SECRET = "<your client secret>"
 
 java -jar target\backlogger-reprocess-1.0.0.jar `
   --input C:\git\data\CITI_Migration\swfa.citi\swfaciti_keys_to_reprocess.csv `
@@ -88,8 +123,11 @@ Create a Run/Debug Configuration for `com.smarsh.backlogger.Main`:
 - **Program arguments**: the `--input` / `--limit` / `--batch-size` /
   `--concurrency` / `--output-dir` flags above (these are CLI args parsed by
   `CliConfig`, not JVM settings).
-- **Environment variables**: `BACKLOGGER_TOKEN=<your token>` (read via
-  `System.getenv`, not a system property — do not put it in VM options).
+- **Environment variables**: all six from the Configuration table above
+  (`BACKLOGGER_ES_HOST`, `BACKLOGGER_ES_INDEX_PREFIX`, `BACKLOGGER_REPLAY_URL`,
+  `BACKLOGGER_TOKEN_URL`, `BACKLOGGER_CLIENT_ID`, `BACKLOGGER_CLIENT_SECRET`)
+  — read via `System.getenv`, not system properties, so they go in the
+  Environment variables field, not VM options.
 - **VM options**: leave empty for test runs. For a full 3M-key run you can
   add `-Xmx1g` here if needed, but virtual threads need no special flags
   (`--enable-preview` is not required — stable in Java 21).
@@ -150,32 +188,29 @@ own queue — this tool does not poll or wait for that to confirm.
 ## Known risks / things to keep in mind
 
 - **ES index target is narrowed per batch to the keys' own date, not the
-  fully open `rmaas-tier2-*` wildcard.** Real testing showed the open
-  wildcard fans every query out across every shard in the cluster's entire
-  history, which repeatedly tripped Elasticsearch's parent circuit breaker
-  (`Data too large ... 5.5gb ... limit of 5.4gb`) and even caused the node to
-  stop accepting new connections for minutes at a time under `--concurrency
-  10` — the query's `size` wasn't the dominant cost, shard fan-out was.
-  `EsBatchChecker` now derives the index pattern from each key's own
-  `YYYY/MM` prefix (keys look like `2017/07/06/.../file.gz`), e.g.
-  `rmaas-tier2-2017-07-*` instead of `rmaas-tier2-*`. A batch spanning
-  multiple months queries multiple narrow patterns (comma-joined) rather
-  than ever falling back to the open wildcard, so nothing is silently
-  excluded — this is a correctness-preserving optimization, not a
-  hardcoded date range. `size` is also still set to the batch's exact
-  length rather than a fixed large number (a key can match at most one
-  document, so this is never truncated and is cheaper for ES to serve).
-  If you still see `circuit_breaking_exception`/`task_cancelled_exception`
-  or connection timeouts after this fix, the cluster is likely under
-  capacity for even a narrowed query at that `--concurrency` — reduce it
-  further rather than assuming it's a code bug.
+  fully open `{BACKLOGGER_ES_INDEX_PREFIX}*` wildcard.** Real testing showed
+  the open wildcard fans every query out across every shard in the
+  cluster's entire history, which repeatedly tripped Elasticsearch's parent
+  circuit breaker (`Data too large ... 5.5gb ... limit of 5.4gb`) and even
+  caused the node to stop accepting new connections for minutes at a time
+  under `--concurrency 10` — the query's `size` wasn't the dominant cost,
+  shard fan-out was. `EsBatchChecker` derives the index pattern from each
+  key's own `YYYY/MM` prefix (keys look like `2017/07/06/.../file.gz`), e.g.
+  `rmaas-tier2-2017-07-*` instead of `rmaas-tier2-*` (both the prefix and
+  the date are configurable/derived, not hardcoded — see Configuration
+  above). A batch spanning multiple months queries multiple narrow patterns
+  (comma-joined) rather than ever falling back to the open wildcard, so
+  nothing is silently excluded — this is a correctness-preserving
+  optimization, not a fixed date range. `size` is also still set to the
+  batch's exact length rather than a fixed large number (a key can match at
+  most one document, so this is never truncated and is cheaper for ES to
+  serve). If you still see `circuit_breaking_exception`/
+  `task_cancelled_exception` or connection timeouts after this fix, the
+  cluster is likely under capacity for even a narrowed query at that
+  `--concurrency` — reduce it further rather than assuming it's a code bug.
 - No documented rate limit exists for the backlogger API — start
   `--concurrency` low and increase only if it tolerates it.
 - If a batch fails and its keys end up in `failed-batches.csv` after a
   false failure (e.g. a bug in success detection), reprocess by rerunning
   against the same output dir once the underlying issue is fixed — failed
   keys are always retried since they're never added to the resume ledger.
-- Reprocessing archived communications data may fall under
-  retention/compliance rules (e.g. SEC 17a-4-style obligations); that
-  determination is outside this tool's scope and should be validated by
-  the relevant compliance function before a full production-scale run.

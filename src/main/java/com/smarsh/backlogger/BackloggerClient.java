@@ -16,18 +16,23 @@ import java.util.List;
  * success, and actual re-indexing happens later/asynchronously depending on
  * backlogger's own queue depth — that is out of scope for this tool to
  * track, and is NOT treated as a failure/retry condition.
+ *
+ * The bearer token comes from a shared TokenProvider (fetched once via
+ * OAuth client_credentials, cached, reused across every call). On an HTTP
+ * 401 the cached token is invalidated so the next retry attempt fetches a
+ * fresh one instead of repeating the same stale token three times.
  */
 public class BackloggerClient {
 
     private final HttpClient client;
     private final String url;
-    private final String token;
+    private final TokenProvider tokenProvider;
     private final Logger logger;
 
-    BackloggerClient(HttpClient client, String url, String token, Logger logger) {
+    BackloggerClient(HttpClient client, String url, TokenProvider tokenProvider, Logger logger) {
         this.client = client;
         this.url = url;
-        this.token = token;
+        this.tokenProvider = tokenProvider;
         this.logger = logger;
     }
 
@@ -43,6 +48,7 @@ public class BackloggerClient {
 
     private Void doSubmit(List<String> keys) throws Exception {
         String body = String.join(",", keys);
+        String token = tokenProvider.getToken();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(url))
@@ -53,6 +59,15 @@ public class BackloggerClient {
             .build();
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() == 401) {
+            // Cached token expired/revoked - invalidate so the next retry
+            // attempt (RetryExecutor) fetches a fresh one instead of
+            // repeating the same stale token.
+            tokenProvider.invalidate();
+            throw new IllegalStateException("Backlogger call failed, HTTP 401 (token expired/invalid) - "
+                + "will fetch a fresh token on retry: " + truncate(response.body()));
+        }
 
         boolean ok = response.statusCode() >= 200 && response.statusCode() < 300
             && response.body() != null && response.body().toLowerCase().contains("submitted");
