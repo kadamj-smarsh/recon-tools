@@ -1,7 +1,26 @@
 # backlogger-reprocess
 
-Java 21 CLI tool to reprocess S3 keys via the backlogger `replayKeys` API,
-skipping keys that are already present in Elasticsearch.
+A single Maven module (Java 21, one shared `pom.xml`/fat jar) holding three
+independent CLI tools, each with its own `main()`:
+
+| Tool | Entry point | Purpose |
+|---|---|---|
+| Backlogger reprocess | `com.smarsh.backlogger.Main` (the jar's default `Main-Class`, run via `java -jar ...`) | Reprocess S3 keys via the backlogger `replayKeys` API, skipping keys already in ES |
+| Duplicate source-id checker | `com.smarsh.backlogger.DuplicateSourceIdChecker` (run via `java -cp ... <class>`) | For each sourceId in a CSV, classify it as unique/duplicate/zero-count via an ES `_count` query |
+| Athena year key-count | `com.smarsh.athena.Main` (run via `java -cp ... <class>`) | Per-year Athena query counting `DISTINCT key`, written to a local CSV |
+
+Only the first tool is the jar's default `Main-Class` (`java -jar
+target\backlogger-reprocess-1.0.0.jar ...`); the other two are run by
+specifying their fully-qualified class name with `-cp` instead — same fat
+jar, same dependencies, different entry point. See each tool's own section
+below for its specific config/usage.
+
+---
+
+# Tool 1: Backlogger reprocess (`com.smarsh.backlogger.Main`)
+
+Reprocesses S3 keys via the backlogger `replayKeys` API, skipping keys
+that are already present in Elasticsearch.
 
 ## What it does
 
@@ -214,3 +233,160 @@ own queue — this tool does not poll or wait for that to confirm.
   false failure (e.g. a bug in success detection), reprocess by rerunning
   against the same output dir once the underlying issue is fixed — failed
   keys are always retried since they're never added to the resume ledger.
+
+---
+
+# Tool 2: Duplicate source-id checker (`com.smarsh.backlogger.DuplicateSourceIdChecker`)
+
+Standalone, unrelated to the backlogger pipeline. For each sourceId in a
+CSV, runs a single ES `_count` query matching
+`"X-SMARSH-SOURCE-ID:{sourceId}"` as a phrase inside `text.sys.content`,
+plus a wide `startTime` range filter, and classifies the id by how many
+docs matched:
+
+| Result | Output file |
+|---|---|
+| count == 0 | `zero-count-source-ids.csv` |
+| count == 1 | `unique-source-ids.csv` |
+| count > 1 | `duplicate-source-ids.csv` (`sourceId,count`) |
+| query error | `failed-source-ids.csv` (`sourceId,error`) — single attempt, no retry |
+
+Unlike the S3-key `terms` check, a sourceId can't be batched with
+others — each `query_string` phrase match is inherently per-id, so this
+issues **one `_count` call per row**, one per virtual thread, with overall
+concurrency to ES bounded by `--concurrency`. Start conservative (2-5):
+this is a heavier full-text query with no per-item date narrowing
+available (sourceIds don't carry a date the way S3 keys do).
+
+**Resumable**: on startup, ids already present in
+`unique-source-ids.csv`/`duplicate-source-ids.csv`/`zero-count-source-ids.csv`
+from a prior run (same `--output-dir`) are loaded and skipped. Failed ids
+are *not* in this ledger, so a rerun naturally retries them.
+
+## CLI arguments
+
+| Flag | Default |
+|---|---|
+| `--input <path>` | `../duplicates_source_ids.csv` |
+| `--concurrency <int>` | `3` |
+| `--limit <int>` | unlimited |
+| `--output-dir <path>` | `output-duplicates` |
+| `--es-host <url>` | env `BACKLOGGER_ES_HOST` |
+| `--es-index-prefix <str>` | env `BACKLOGGER_ES_INDEX_PREFIX` |
+
+Reuses the same `BACKLOGGER_ES_HOST`/`BACKLOGGER_ES_INDEX_PREFIX` env vars
+as Tool 1 (same ES cluster), but needs no backlogger token — this tool
+never calls backlogger.
+
+## Running
+
+```powershell
+$env:BACKLOGGER_ES_HOST = "http://10.10.100.10:9200"
+$env:BACKLOGGER_ES_INDEX_PREFIX = "rmaas-tier2-"
+
+java -cp target\backlogger-reprocess-1.0.0.jar com.smarsh.backlogger.DuplicateSourceIdChecker `
+  --input ..\duplicates_source_ids.csv --limit 20 --concurrency 2 --output-dir .\output-duplicates
+```
+
+---
+
+# Tool 3: Athena year key-count (`com.smarsh.athena.Main`)
+
+Standalone, unrelated to ES/backlogger. For each "year bucket" — a
+calendar year 2000-2026, or one of three special multi-year buckets
+`pre-1970` / `1970-1999` / `post-2026` — runs one Athena query counting
+`COUNT(DISTINCT key)` per year, filtered by that bucket's `quadrimester`
+value(s):
+
+```sql
+SELECT YEAR(FROM_UNIXTIME(CAST(start_time AS BIGINT) / 1000)) AS year,
+    COUNT(DISTINCT key) AS key_count
+FROM {table}
+WHERE reporting_entity = '{reportingEntity}'
+  AND quadrimester IN (...)   -- that bucket's quadrimester value(s)
+GROUP BY YEAR(FROM_UNIXTIME(CAST(start_time AS BIGINT) / 1000))
+ORDER BY year
+```
+
+and appends every `(year, key_count)` row to a local output CSV as each
+bucket's query finishes.
+
+- **Full default range** = 27 years (2000-2026) + 3 special buckets = 30
+  queries. Use `--years <csv>` to run a specific subset instead, e.g.
+  `--years 2023` or `--years 2020,2021,pre-1970`.
+- **`ResultConfiguration` is only set if you pass `--s3-output-location`.**
+  Athena requires an S3 staging location for every query regardless of
+  whether it's the workgroup's default or specified explicitly — if your
+  workgroup has none configured, you'll get `"No output location
+  provided"` unless you pass one. This tool never reads/manages that S3
+  object itself either way, it only calls `GetQueryResults` and writes
+  rows locally.
+- A single retry (2 attempts, 5s apart) per bucket; a bucket that still
+  fails is logged and skipped, the run continues with the rest.
+- **Resumable per bucket**: a `<output-csv>.processed-buckets.txt`
+  manifest records each bucket label once its query succeeds. On the next
+  run (same `--output-csv`), buckets already in that manifest are skipped
+  — no Athena call at all. This is tracked separately from the output
+  CSV on purpose: the special buckets write rows keyed by the *actual*
+  data year found (e.g. `1975`), not the bucket label, and a bucket with
+  genuinely zero matching data writes no CSV rows at all but is still
+  "done" — so completion can't be inferred from the CSV's own contents.
+  Each Athena query is all-or-nothing (no partial results on failure), so
+  a failed bucket reruns from scratch next time, never "resumes mid-year."
+
+## AWS credentials
+
+No credential handling in this code — the AWS SDK's default credential
+provider chain picks up the standard env vars automatically:
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` (for
+temporary/STS credentials).
+
+## CLI arguments
+
+| Flag | Required? | Default |
+|---|---|---|
+| `--database <name>` | **Required** | — |
+| `--reporting-entity <value>` | **Required** | — |
+| `--table <name>` | optional | `tier2_migration_duplicate_stage2` |
+| `--region <str>` | optional | `us-east-1` |
+| `--workgroup <str>` | optional | `primary` — **check your actual workgroup name**, see below |
+| `--years <csv>` | optional | full range: `2000..2026` + `pre-1970,1970-1999,post-2026` |
+| `--output-csv <path>` | optional | `./year-key-counts.csv` |
+| `--concurrency <int>` | optional | `3` |
+| `--s3-output-location <uri>` | optional (required if your workgroup has no default) | none |
+
+**On `--workgroup`**: real testing showed `primary` has no default output
+location configured, and the database being queried isn't even in that
+workgroup. Use the workgroup name shown in the Athena console (top-right
+of the query editor, or **Athena → Workgroups**) for whatever workgroup
+you actually use to query this database — that workgroup likely already
+has a default output location, letting you skip `--s3-output-location`
+entirely.
+
+## Running
+
+```powershell
+$env:AWS_ACCESS_KEY_ID = "..."
+$env:AWS_SECRET_ACCESS_KEY = "..."
+$env:AWS_SESSION_TOKEN = "..."
+
+java -cp target\backlogger-reprocess-1.0.0.jar com.smarsh.athena.Main `
+  --database <your athena database> `
+  --reporting-entity njfa.citi `
+  --workgroup <your actual workgroup name> `
+  --years 2023 `
+  --output-csv test-year-key-counts.csv
+```
+
+Drop `--years` to run the full 30-bucket range once a single-year test
+looks right.
+
+### AWS SDK version note
+
+The org's Artifactory proxy returns `403 Forbidden` for most AWS SDK v2
+versions (not Athena-specific — same happened for `s3` and for AWS SDK
+v1). Version **2.21.13** (pinned in `pom.xml`) happened to already be
+fully cached locally from an earlier successful resolution. If building on
+a machine without that `.m2` cache, either get IT to allowlist
+`software.amazon.awssdk` in Artifactory, or copy the `2.21.13` folders
+from an existing `.m2` cache.
