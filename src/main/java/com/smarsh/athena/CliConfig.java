@@ -22,6 +22,8 @@ import java.util.List;
  *     --concurrency <int>        default: 3
  *     --s3-output-location <uri> optional, e.g. s3://bucket/prefix/ - only needed if your
  *                                workgroup has no default query-result location configured
+ *     --count-field <name>       default: key - the column COUNT(DISTINCT ...) is applied to,
+ *                                e.g. "source_id" to count distinct source ids instead of keys
  */
 public class CliConfig {
 
@@ -34,9 +36,11 @@ public class CliConfig {
     final Path outputCsv;
     final int concurrency;
     final String s3OutputLocation; // nullable
+    final String countField;
 
     private CliConfig(String database, String reportingEntity, String table, String region, String workgroup,
-                       List<YearBuckets.Bucket> buckets, Path outputCsv, int concurrency, String s3OutputLocation) {
+                       List<YearBuckets.Bucket> buckets, Path outputCsv, int concurrency, String s3OutputLocation,
+                       String countField) {
         this.database = database;
         this.reportingEntity = reportingEntity;
         this.table = table;
@@ -46,6 +50,7 @@ public class CliConfig {
         this.outputCsv = outputCsv;
         this.concurrency = concurrency;
         this.s3OutputLocation = s3OutputLocation;
+        this.countField = countField;
     }
 
     static CliConfig parse(String[] args) {
@@ -58,6 +63,7 @@ public class CliConfig {
         String outputCsv = "year-key-counts.csv";
         int concurrency = 3;
         String s3OutputLocation = null;
+        String countField = "key";
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
@@ -72,6 +78,7 @@ public class CliConfig {
                 case "--output-csv" -> { outputCsv = require(arg, value); i++; }
                 case "--concurrency" -> { concurrency = Integer.parseInt(require(arg, value)); i++; }
                 case "--s3-output-location" -> { s3OutputLocation = require(arg, value); i++; }
+                case "--count-field" -> { countField = require(arg, value); i++; }
                 default -> throw new IllegalArgumentException("Unknown argument: " + arg);
             }
         }
@@ -86,7 +93,7 @@ public class CliConfig {
         List<YearBuckets.Bucket> buckets = (years != null) ? YearBuckets.parse(years) : YearBuckets.fullRange();
 
         return new CliConfig(database, reportingEntity, table, region, workgroup,
-            buckets, Paths.get(outputCsv), concurrency, s3OutputLocation);
+            buckets, Paths.get(outputCsv), concurrency, s3OutputLocation, countField);
     }
 
     private static String require(String arg, String value) {

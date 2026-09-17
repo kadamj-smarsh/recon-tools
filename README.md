@@ -354,6 +354,15 @@ temporary/STS credentials).
 | `--output-csv <path>` | optional | `./year-key-counts.csv` |
 | `--concurrency <int>` | optional | `3` |
 | `--s3-output-location <uri>` | optional (required if your workgroup has no default) | none |
+| `--count-field <name>` | optional | `key` — the column `COUNT(DISTINCT ...)` is applied to, e.g. `source_id` to count distinct source ids per year instead |
+
+**On `--count-field`**: the output CSV's second column is named
+`{count-field}_count` (e.g. `key_count` or `source_id_count`), so switching
+fields between runs needs a different `--output-csv` anyway — don't reuse
+the same output file across different `--count-field` values, since the
+resume manifest (`<output-csv>.processed-buckets.txt`) is keyed by bucket
+label only, not by field, and would incorrectly skip buckets that were
+only completed for a *different* field.
 
 **On `--workgroup`**: real testing showed `primary` has no default output
 location configured, and the database being queried isn't even in that

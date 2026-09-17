@@ -68,6 +68,7 @@ public class Main {
         log("Concurrency      : " + config.concurrency);
         log("S3 output loc.   : " + (config.s3OutputLocation != null ? config.s3OutputLocation
             : "(none - relying on workgroup default)"));
+        log("Count field      : " + config.countField);
         Path manifestPath = Path.of(config.outputCsv.toString() + PROCESSED_SUFFIX);
         Set<String> alreadyProcessed = loadProcessedBuckets(manifestPath);
         List<YearBuckets.Bucket> pending = config.buckets.stream()
@@ -90,7 +91,7 @@ public class Main {
         try (PrintWriter csv = new PrintWriter(Files.newBufferedWriter(config.outputCsv, StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE, StandardOpenOption.APPEND))) {
             if (writeHeader) {
-                csv.println("year,key_count");
+                csv.println("year," + config.countField + "_count");
                 csv.flush();
             }
 
@@ -131,7 +132,7 @@ public class Main {
         Exception last = null;
         for (int attempt = 1; attempt <= 2; attempt++) {
             try {
-                String sql = buildSql(config.table, config.reportingEntity, bucket.quadrimesterValues());
+                String sql = buildSql(config.table, config.reportingEntity, config.countField, bucket.quadrimesterValues());
                 List<List<String>> rows = runner.runQuery(sql);
                 writeRows(csv, bucket.label(), rows);
                 return;
@@ -175,7 +176,7 @@ public class Main {
         }
     }
 
-    private static String buildSql(String table, String reportingEntity, List<String> quadrimesterValues) {
+    private static String buildSql(String table, String reportingEntity, String countField, List<String> quadrimesterValues) {
         String quotedEntity = reportingEntity.replace("'", "''");
         String quotedList = quadrimesterValues.stream()
             .map(v -> "'" + v.replace("'", "''") + "'")
@@ -183,7 +184,7 @@ public class Main {
             .orElseThrow();
 
         return "SELECT YEAR(FROM_UNIXTIME(CAST(start_time AS BIGINT) / 1000)) AS year, "
-            + "COUNT(DISTINCT key) AS key_count "
+            + "COUNT(DISTINCT " + countField + ") AS " + countField + "_count "
             + "FROM " + table + " "
             + "WHERE reporting_entity = '" + quotedEntity + "' "
             + "AND quadrimester IN (" + quotedList + ") "
