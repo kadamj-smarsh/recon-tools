@@ -15,7 +15,7 @@ public class RetryExecutor {
      * triggers a retry with backoff. If all attempts fail, the last
      * exception is rethrown, wrapped in BatchFailedException by the caller.
      */
-    static <T> T withRetry(Callable<T> action, String opLabel, Logger logger) throws Exception {
+    public static <T> T withRetry(Callable<T> action, String opLabel, Logger logger) throws Exception {
         Exception last = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {

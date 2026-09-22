@@ -21,17 +21,17 @@ public class Logger implements AutoCloseable {
 
     private final PrintWriter fileWriter;
 
-    Logger(Path outputDir) throws IOException {
+    public Logger(Path outputDir) throws IOException {
         Files.createDirectories(outputDir);
         this.fileWriter = new PrintWriter(Files.newBufferedWriter(outputDir.resolve(LOG_FILE),
             StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND));
     }
 
-    synchronized void info(String message) {
+    public synchronized void info(String message) {
         write(System.out, message);
     }
 
-    synchronized void warn(String message) {
+    public synchronized void warn(String message) {
         write(System.err, message);
     }
 

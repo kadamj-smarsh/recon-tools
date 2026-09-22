@@ -1,19 +1,24 @@
 # backlogger-reprocess
 
-A single Maven module (Java 21, one shared `pom.xml`/fat jar) holding three
+A single Maven module (Java 21, one shared `pom.xml`/fat jar) holding seven
 independent CLI tools, each with its own `main()`:
 
 | Tool | Entry point | Purpose |
 |---|---|---|
 | Backlogger reprocess | `com.smarsh.backlogger.Main` (the jar's default `Main-Class`, run via `java -jar ...`) | Reprocess S3 keys via the backlogger `replayKeys` API, skipping keys already in ES |
 | Duplicate source-id checker | `com.smarsh.backlogger.DuplicateSourceIdChecker` (run via `java -cp ... <class>`) | For each sourceId in a CSV, classify it as unique/duplicate/zero-count via an ES `_count` query |
-| Athena year key-count | `com.smarsh.athena.Main` (run via `java -cp ... <class>`) | Per-year Athena query counting `DISTINCT key`, written to a local CSV |
+| Duplicate key checker | `com.smarsh.keycount.Main` (run via `java -cp ... <class>`) | For each key in a CSV, count how many times it appears in ES — see its own README in `src/main/java/com/smarsh/keycount/` |
+| Athena year key-count | `com.smarsh.athena.Main` (run via `java -cp ... <class>`) | Per-year Athena query counting `DISTINCT key` (or any field via `--count-field`), written to a local CSV |
+| ES vs. Athena reconciliation | `com.smarsh.reconcile.Main` (run via `java -cp ... <class>`) | Recursive month→second drill-down comparing ES/Athena unique-key counts, writing outstanding keys to a CSV — see its own README in `src/main/java/com/smarsh/reconcile/` |
+| Source-id → key → Athena lookup | `com.smarsh.sourcelookup.SourceIdAthenaLookup` (run via `java -cp ... <class>`) | For each sourceId in a CSV: finds its ES key, derives the Athena quadrimester from that key's date, then confirms via a narrowed `COUNT(*)` — see its own README in `src/main/java/com/smarsh/sourcelookup/` |
+| Quadrimester Athena migration | `com.smarsh.migration.QuadrimesterMigrator` (run via `java -cp ... <class>`) | Per-quadrimester dedup + verify + UNLOAD migration of `tier2_migration_duplicate_stage2` data to a permanent S3 destination, split into 4 monthly steps to avoid Athena query exhaustion — see its own README in `src/main/java/com/smarsh/migration/` |
 
 Only the first tool is the jar's default `Main-Class` (`java -jar
-target\backlogger-reprocess-1.0.0.jar ...`); the other two are run by
+target\backlogger-reprocess-1.0.0.jar ...`); the rest are run by
 specifying their fully-qualified class name with `-cp` instead — same fat
 jar, same dependencies, different entry point. See each tool's own section
-below for its specific config/usage.
+below (or its package-level README, for the two that have one) for its
+specific config/usage.
 
 ---
 
