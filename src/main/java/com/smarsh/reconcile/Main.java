@@ -20,7 +20,7 @@ import java.util.concurrent.Executors;
  * algorithm). Sequential - see Reconciler's class javadoc for why.
  *
  * Run: java -cp target/backlogger-reprocess-1.0.0.jar com.smarsh.reconcile.Main
- *        --years 2013 --reporting-entity njfa.citi --database <db> [options]
+ *        --years 2013 --reporting-entity <reporting-entity> --database <db> [options]
  */
 public class Main {
 

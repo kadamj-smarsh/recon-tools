@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
  *     --quadrimesters <csv>      optional, e.g. "2025-T3" - narrows to specific quadrimesters,
  *                                must be a subset of what --years implies
  *     --stage2-table <name>      default: tier2_migration_duplicate_stage2
- *     --bucket <name>            default: eventlog-rmaas-aws-us-east-1-citigroup-tech-production
+ *     --bucket <name>            required, no default (your migration S3 bucket)
  *     --region <str>             default: us-east-1
  *     --workgroup <str>          default: primary
  *     --s3-output-location <uri> optional
@@ -63,7 +63,7 @@ public class MigrationConfig {
         String database = null;
         String quadrimesters = null;
         String stage2Table = "tier2_migration_duplicate_stage2";
-        String bucket = "eventlog-rmaas-aws-us-east-1-citigroup-tech-production";
+        String bucket = null;
         String region = "us-east-1";
         String workgroup = "primary";
         String s3OutputLocation = null;
@@ -97,6 +97,9 @@ public class MigrationConfig {
         }
         if (database == null || database.isBlank()) {
             throw new IllegalStateException("Missing required argument: --database <name>");
+        }
+        if (bucket == null || bucket.isBlank()) {
+            throw new IllegalStateException("Missing required argument: --bucket <name>");
         }
 
         List<Integer> parsedYears = new ArrayList<>();

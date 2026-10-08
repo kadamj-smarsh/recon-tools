@@ -74,7 +74,7 @@ $env:AWS_SESSION_TOKEN = "..."
 
 java -cp target\backlogger-reprocess-1.0.0.jar com.smarsh.sourcelookup.SourceIdAthenaLookup `
   --input source_ids.csv `
-  --reporting-entity njfa.citi `
+  --reporting-entity <reporting-entity> `
   --database <your athena database> `
   --workgroup <your actual workgroup name> `
   --concurrency 5

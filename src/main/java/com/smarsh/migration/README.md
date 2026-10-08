@@ -82,7 +82,7 @@ Maven dependency needed.
 | `--database <name>` | **Required** | Athena database |
 | `--quadrimesters <csv>` | optional | narrows to specific labels e.g. `"2025-T3"`, must be a subset of what `--years` implies — use this for safe first-time testing |
 | `--stage2-table <name>` | optional | `tier2_migration_duplicate_stage2` |
-| `--bucket <name>` | optional | `eventlog-rmaas-aws-us-east-1-citigroup-tech-production` |
+| `--bucket <name>` | **Required**, no default | your migration S3 bucket |
 | `--region <str>` | optional | `us-east-1` |
 | `--workgroup <str>` | optional | `primary` — check your actual workgroup, same caveat as the other Athena tools |
 | `--s3-output-location <uri>` | optional | none (only needed if your workgroup has no default) |
@@ -100,9 +100,10 @@ $env:AWS_SECRET_ACCESS_KEY = "..."
 $env:AWS_SESSION_TOKEN = "..."
 
 java -cp target\backlogger-reprocess-1.0.0.jar com.smarsh.migration.QuadrimesterMigrator `
-  --reporting-entity swfa.citi `
+  --reporting-entity <reporting-entity> `
   --years 2025 `
   --database <your athena database> `
+  --bucket <your migration S3 bucket> `
   --workgroup <your actual workgroup name> `
   --quadrimesters 2025-T3
 ```

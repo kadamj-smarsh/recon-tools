@@ -8,7 +8,7 @@ import java.nio.file.Paths;
  *
  * Usage:
  *   java -jar backlogger-reprocess-1.0.0.jar
- *     --input <path>            default: swfaciti_keys_to_reprocess.csv
+ *     --input <path>            default: keys_to_reprocess.csv
  *     --batch-size <int>        default: 500
  *     --concurrency <int>       default: 100
  *     --output-dir <path>       default: ./output
@@ -29,7 +29,7 @@ import java.nio.file.Paths;
  */
 public class CliConfig {
 
-    static final String DEFAULT_INPUT = "swfaciti_keys_to_reprocess.csv";
+    static final String DEFAULT_INPUT = "keys_to_reprocess.csv";
     static final int DEFAULT_BATCH_SIZE = 500;
     static final int DEFAULT_CONCURRENCY = 100;
     static final String DEFAULT_OUTPUT_DIR = "output";

@@ -63,7 +63,7 @@ ES index target per batch is narrowed from each key's own `YYYY/MM` date
 prefix (same optimization as `EsBatchChecker`), falling back to the fully
 open `{prefix}*` wildcard for any key that doesn't parse as
 `YYYY/MM/...` — a generic key list isn't guaranteed to follow the S3-key
-date format the way `swfaciti_keys_to_reprocess.csv` does.
+date format the way the S3-key reprocess input file does.
 
 ## Running
 

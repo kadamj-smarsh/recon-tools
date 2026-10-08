@@ -29,12 +29,13 @@ that are already present in Elasticsearch.
 
 ## What it does
 
-1. Streams S3 keys from `swfaciti_keys_to_reprocess.csv` (~2.96M keys, one
-   per line, quoted, Athena CTAS export with a `"_col0"` header) without
+1. Streams S3 keys from an input CSV (one per line, quoted, Athena CTAS
+   export with a `"_col0"` header — ~2.96M keys in the original run) without
    loading the whole file into memory.
 2. Batches keys (default 500 per batch) and, for each batch, on a virtual
    thread:
-   - Checks Elasticsearch (index host default `http://10.30.146.93:9200`,
+   - Checks Elasticsearch (host configured via `BACKLOGGER_ES_HOST`/
+     `--es-host`, no hardcoded default — see Configuration below),
      index target narrowed per batch from the keys' own dates — see "Known
      risks" below) with a cheap `_count` first using a `terms` query on the
      `key` field. If the count is zero, every key in the batch is missing —
@@ -66,7 +67,7 @@ scripts (`rssmb/check_keys_parallel.sh` etc.) suffered from.
 ## Build
 
 ```powershell
-cd C:\git\data\CITI_Migration\swfa.citi\backlogger-reprocess
+cd <path-to>\recon-tools
 mvn clean package
 ```
 
@@ -91,7 +92,7 @@ every other host/URL setting.
 
 | Other setting | CLI flag | Default |
 |---|---|---|
-| Input CSV | `--input <path>` | `swfaciti_keys_to_reprocess.csv` |
+| Input CSV | `--input <path>` | `keys_to_reprocess.csv` |
 | Batch size | `--batch-size <int>` | `500` |
 | In-flight concurrency | `--concurrency <int>` | `100` |
 | Output directory | `--output-dir <path>` | `./output` |
@@ -118,15 +119,15 @@ fetched automatically on the next retry attempt — no manual re-run needed.
 ## Running from the command line
 
 ```powershell
-$env:BACKLOGGER_ES_HOST = "http://10.10.100.10:9200"
+$env:BACKLOGGER_ES_HOST = "http://<your-es-host>:9200"
 $env:BACKLOGGER_ES_INDEX_PREFIX = "rmaas-tier2-"
-$env:BACKLOGGER_REPLAY_URL = "https://ea-tier2-backlogger-v2-rest-rmaas.ea.internal.citi.us-east-1.aws.smarsh.cloud/backlogger/replayKeys"
-$env:BACKLOGGER_TOKEN_URL = "https://uaa.ea.internal.citi.us-east-1.aws.smarsh.cloud/oauth/token/"
+$env:BACKLOGGER_REPLAY_URL = "https://<your-backlogger-host>/backlogger/replayKeys"
+$env:BACKLOGGER_TOKEN_URL = "https://<your-uaa-host>/oauth/token/"
 $env:BACKLOGGER_CLIENT_ID = "<your client id>"
 $env:BACKLOGGER_CLIENT_SECRET = "<your client secret>"
 
 java -jar target\backlogger-reprocess-1.0.0.jar `
-  --input C:\git\data\CITI_Migration\swfa.citi\swfaciti_keys_to_reprocess.csv `
+  --input C:\path\to\keys_to_reprocess.csv `
   --batch-size 500 --concurrency 30 `
   --output-dir .\output
 ```
@@ -135,7 +136,7 @@ For a small test run first (recommended — see Testing below):
 
 ```powershell
 java -jar target\backlogger-reprocess-1.0.0.jar `
-  --input ..\swfaciti_keys_to_reprocess.csv `
+  --input ..\keys_to_reprocess.csv `
   --limit 10 --batch-size 10 --concurrency 1 `
   --output-dir .\test-output
 ```
@@ -386,7 +387,7 @@ $env:AWS_SESSION_TOKEN = "..."
 
 java -cp target\backlogger-reprocess-1.0.0.jar com.smarsh.athena.Main `
   --database <your athena database> `
-  --reporting-entity njfa.citi `
+  --reporting-entity <reporting-entity> `
   --workgroup <your actual workgroup name> `
   --years 2023 `
   --output-csv test-year-key-counts.csv

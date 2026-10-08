@@ -100,7 +100,7 @@ $env:AWS_SESSION_TOKEN = "..."
 
 java -cp target\backlogger-reprocess-1.0.0.jar com.smarsh.reconcile.Main `
   --years 2013 `
-  --reporting-entity njfa.citi `
+  --reporting-entity <reporting-entity> `
   --database <your athena database> `
   --workgroup <your actual workgroup name> `
   --output-csv reconcile-2013.csv
